@@ -221,8 +221,9 @@ app.get('/api/stream/:subject_id', async (req, res) => {
     const data = resp.data.data;
     
     const hasResource = data.hasResource;
+   
     const streams = data.downloads.map(s => ({
-        resolution: `${s.resolutions}p`,
+        resolution: `${s.resolution}p`,
         format: s.format,
         url: s.url,
         size: s.size,
