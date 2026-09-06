@@ -216,12 +216,12 @@ app.get('/api/stream/:subject_id', async (req, res) => {
     const domData = await _makeRequest(`${API_BASE}/media-player/get-domain`);
     const domain = domData.data || 'https://netfilm.world';
     const playerReferer = `${domain}/spa/videoPlayPage/movies/${detail_path}?id=${subject_id}&type=/movie/detail&detailSe=${se}&detailEp=${ep}&lang=en`;
-    const playUrl = `${domain}/wefeed-h5api-bff/subject/play?subjectId=${subject_id}&se=${se}&ep=${ep}&detailPath=${detail_path}`;
+    const playUrl = `${domain}/wefeed-h5api-bff/subject/download?subjectId=${subject_id}&se=${se}&ep=${ep}&detailPath=${detail_path}`;
     const resp = await axios.get(playUrl, { headers: { ...PLAYER_HEADERS, Referer: playerReferer } });
     const data = resp.data.data;
     
     const hasResource = data.hasResource;
-    const streams = data.streams.map(s => ({
+    const streams = data.downloads.map(s => ({
         resolution: `${s.resolutions}p`,
         format: s.format,
         url: s.url,
