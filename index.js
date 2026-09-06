@@ -397,8 +397,6 @@ app.get('/api/stream/:subject_id/captions', async (req, res) => {
     res.json({ subject_id, se, ep, count: captions.length, captions });
 });
 
-app.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`);
-});
+
 
 export default app;
