@@ -170,8 +170,9 @@ app.get('/detail/:slug', async (req, res) => {
     res.json(await _makeRequest(url));
 });
 
-app.get('/api/stream/:subject_id/:detail_path', async (req, res) => {
-    const { subject_id, detail_path, se = 1, ep = 1 } = req.params;
+app.get('/api/stream/:subject_id', async (req, res) => {
+    const { subject_id } = req.params;
+    const { detail_path, se = 1, ep = 1 } = req.query;
     const domData = await _makeRequest(`${API_BASE}/media-player/get-domain`);
     const domain = domData.data || 'https://netfilm.world';
     const playerReferer = `${domain}/spa/videoPlayPage/movies/${detail_path}?id=${subject_id}&type=/movie/detail&detailSe=${se}&detailEp=${ep}&lang=en`;
@@ -192,8 +193,9 @@ app.get('/api/stream/:subject_id/:detail_path', async (req, res) => {
     });
 });
 
-app.get('/api/stream/:subject_id/:detail_path/captions', async (req, res) => {
-    const { subject_id, detail_path, se = 1, ep = 1 } = req.params;
+app.get('/api/stream/:subject_id/captions', async (req, res) => {
+    const { subject_id } = req.params;
+    const { detail_path, se = 1, ep = 1 } = req.query;
     const domData = await _makeRequest(`${API_BASE}/media-player/get-domain`);
     const domain = domData.data || 'https://netfilm.world';
     const playerReferer = `${domain}/spa/videoPlayPage/movies/${detail_path}?id=${subject_id}&type=/movie/detail&detailSe=${se}&detailEp=${ep}&lang=en`;
