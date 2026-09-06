@@ -6,8 +6,7 @@ import axios from 'axios';
 const app = express();
 app.use(cors());
 const PORT = 3000;
-const SELECTED_HOST = process.env.MOVIEBOX_API_HOST || "h5.aoneroom.com";
-const HOST_URL = `https://${SELECTED_HOST}`;
+
 
 const BASE_URL = "https://moviebox.ph";
 const API_BASE = "https://h5-api.aoneroom.com/wefeed-h5api-bff";
@@ -25,21 +24,6 @@ const axiosInstance = axios.create({
     timeout: 30000
 });
 
-let movieboxAppInfo = null;
-let cookiesInitialized = false;
-const DEFAULT = {
-    'X-Client-Info': '{"timezone":"Africa/Nairobi"}',
-    'Accept-Language': 'en-US,en;q=0.5',
-    'Accept': 'application/json',
-    'User-Agent': 'okhttp/4.12.0', // Mobile app user agent from PCAP
-    'Referer': HOST_URL,
-    'Host': SELECTED_HOST,
-    'Connection': 'keep-alive',
-    // Add IP spoofing headers to bypass region restrictions
-    'X-Forwarded-For': '1.1.1.1',
-    'CF-Connecting-IP': '1.1.1.1',
-    'X-Real-IP': '1.1.1.1'
-};
 
 const DEFAULT_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
@@ -73,53 +57,8 @@ const PLAYER_HEADERS = {
     "sec-fetch-site": "same-origin",
 };
 
-function processApiResponse(response) {
-    if (response.data && response.data.data) {
-        return response.data.data;
-    }
-    return response.data || response;
-}
 
-let sessionCookies = '';
 
-async function ensureCookiesAreAssigned() {
-    if (sessionCookies) return true;
-
-    const response = await axiosInstance.get(
-        `${HOST_URL}/wefeed-h5-bff/app/get-latest-app-pkgs?app_name=moviebox`,
-        {
-            headers: DEFAULT
-        }
-    );
-
-    const setCookie = response.headers['set-cookie'];
-
-    if (Array.isArray(setCookie)) {
-        sessionCookies = setCookie
-            .map(cookie => cookie.split(';')[0])
-            .join('; ');
-    }
-
-    movieboxAppInfo = processApiResponse(response);
-
-    return true;
-}
-
-async function makeApiRequestWithCookies(url, options = {}) {
-    await ensureCookiesAreAssigned();
-
-    const config = {
-        url,
-        headers: {
-            ...DEFAULT_HEADERS,
-            ...(options.headers || {})
-        },
-        withCredentials: true,
-        ...options
-    };
-
-    return await axiosInstance(config);
-}
 
 async function _getBearerToken() {
     if (_bearer_token) return _bearer_token;
@@ -271,7 +210,7 @@ app.get('/detail/:slug', async (req, res) => {
     res.json(await _makeRequest(url));
 });
 
-app.get('/api/moviestream/:subject_id', async (req, res) => {
+app.get('/api/stream/:subject_id', async (req, res) => {
     const { subject_id } = req.params;
     const { detail_path, se = 1, ep = 1 } = req.query;
     const domData = await _makeRequest(`${API_BASE}/media-player/get-domain`);
@@ -297,109 +236,6 @@ app.get('/api/moviestream/:subject_id', async (req, res) => {
 
 
 
-app.get('/api/stream/:subject_id', async (req, res) => {
-    try {
-        const { subject_id } = req.params;
-
-        const se = parseInt(req.query.se) || 0;
-        const ep = parseInt(req.query.ep) || 0;
-
-        console.log('STREAM REQUEST:', {
-            subject_id,
-            se,
-            ep
-        });
-
-        // 1. Get movie details
-        console.log('Getting subject detail...');
-
-        const infoResponse = await makeApiRequestWithCookies(
-            `${HOST_URL}/wefeed-h5-bff/web/subject/detail`,
-            {
-                method: 'GET',
-                params: {
-                    subjectId: subject_id
-                }
-            }
-        );
-
-        console.log('Subject detail OK');
-
-        const movieInfo = processApiResponse(infoResponse);
-        const detailPath = movieInfo?.subject?.detailPath;
-
-        if (!detailPath) {
-            throw new Error(
-                'Could not get movie detail path for referer header'
-            );
-        }
-
-        console.log('detailPath:', detailPath);
-
-        const refererUrl =
-            `https://fmoviesunblocked.net/spa/videoPlayPage/movies/` +
-            `${detailPath}?id=${subject_id}&type=/movie/detail`;
-
-        // 2. Get downloads/sources
-        console.log('Getting subject download...');
-
-        const response = await makeApiRequestWithCookies(
-            `${HOST_URL}/wefeed-h5-bff/web/subject/download`,
-            {
-                method: 'GET',
-                params: {
-                    subjectId: subject_id,
-                    se,
-                    ep
-                },
-                headers: {
-                    Referer: refererUrl,
-                    Origin: 'https://fmoviesunblocked.net'
-                }
-            }
-        );
-
-        console.log('Subject download OK');
-
-        const content = processApiResponse(response);
-
-        const downloads = content?.downloads || [];
-
-        const sources = downloads.map(file => ({
-            resolution: `${file.resolution || 'Unknown'}p`,
-            format: file.format || 'mp4',
-            url: file.url,
-            size: file.size,
-            duration: file.duration,
-            codec: file.codecName || file.codec
-        }));
-
-        res.json({
-            subject_id,
-            se,
-            ep,
-            has_resource: sources.length > 0,
-            sources,
-            hls: content?.hls || null,
-            dash: content?.dash || null,
-            free_episodes: content?.freeNum || 0,
-            limited: content?.limited || false,
-            note: sources.length
-                ? null
-                : 'No stream found for this episode.'
-        });
-
-    } catch (error) {
-        console.error('MovieStream error:', error.response?.status || error.message);
-        console.error('MovieStream response:', error.response?.data);
-
-        res.status(500).json({
-            status: 'error',
-            message: 'Failed to fetch streaming sources',
-            error: error.message
-        });
-    }
-});
 
 
 app.get('/api/stream/:subject_id/captions', async (req, res) => {
