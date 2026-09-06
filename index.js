@@ -85,19 +85,14 @@ function processApiResponse(response) {
 async function ensureCookiesAreAssigned() {
     if (!cookiesInitialized) {
         try {
-            console.log('Initializing session cookies...');
+           
             const response = await axiosInstance.get(`${HOST_URL}/wefeed-h5-bff/app/get-latest-app-pkgs?app_name=moviebox`, {
                 headers: DEFAULT
             });
             
             movieboxAppInfo = processApiResponse(response);
             cookiesInitialized = true;
-            console.log('Session cookies initialized successfully');
-            
-            // Log available cookies for debugging
-            if (response.headers['set-cookie']) {
-                console.log('Received cookies:', response.headers['set-cookie']);
-            }
+
             
         } catch (error) {
             console.error('Failed to get app info:', error.message);
@@ -260,7 +255,6 @@ app.get('/api/moviestream/:subject_id', async (req, res) => {
     const playerReferer = `${domain}/spa/videoPlayPage/movies/${detail_path}?id=${subject_id}&type=/movie/detail&detailSe=${se}&detailEp=${ep}&lang=en`;
     const playUrl = `${domain}/wefeed-h5api-bff/subject/play?subjectId=${subject_id}&se=${se}&ep=${ep}&detailPath=${detail_path}`;
     const resp = await axios.get(playUrl, { headers: { ...PLAYER_HEADERS, Referer: playerReferer } });
-        console.log('Stream data:', resp.data);
     const data = resp.data.data;
     
     const hasResource = data.hasResource;
