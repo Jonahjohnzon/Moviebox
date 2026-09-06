@@ -109,18 +109,16 @@ async function makeApiRequestWithCookies(url, options = {}) {
     await ensureCookiesAreAssigned();
 
     const config = {
-        ...options,
         url,
         headers: {
             ...DEFAULT_HEADERS,
-            ...(sessionCookies
-                ? { Cookie: sessionCookies }
-                : {}),
             ...(options.headers || {})
-        }
+        },
+        withCredentials: true,
+        ...options
     };
 
-    return axiosInstance(config);
+    return await axiosInstance(config);
 }
 
 async function _getBearerToken() {
@@ -303,10 +301,18 @@ app.get('/api/stream/:subject_id', async (req, res) => {
     try {
         const { subject_id } = req.params;
 
-        // Movies use 0 for season and episode
         const se = parseInt(req.query.se) || 0;
         const ep = parseInt(req.query.ep) || 0;
+
+        console.log('STREAM REQUEST:', {
+            subject_id,
+            se,
+            ep
+        });
+
         // 1. Get movie details
+        console.log('Getting subject detail...');
+
         const infoResponse = await makeApiRequestWithCookies(
             `${HOST_URL}/wefeed-h5-bff/web/subject/detail`,
             {
@@ -317,6 +323,8 @@ app.get('/api/stream/:subject_id', async (req, res) => {
             }
         );
 
+        console.log('Subject detail OK');
+
         const movieInfo = processApiResponse(infoResponse);
         const detailPath = movieInfo?.subject?.detailPath;
 
@@ -326,14 +334,15 @@ app.get('/api/stream/:subject_id', async (req, res) => {
             );
         }
 
+        console.log('detailPath:', detailPath);
 
-        // 3. Build referer
         const refererUrl =
             `https://fmoviesunblocked.net/spa/videoPlayPage/movies/` +
             `${detailPath}?id=${subject_id}&type=/movie/detail`;
 
+        // 2. Get downloads/sources
+        console.log('Getting subject download...');
 
-        // 4. Get downloads/sources
         const response = await makeApiRequestWithCookies(
             `${HOST_URL}/wefeed-h5-bff/web/subject/download`,
             {
@@ -350,9 +359,10 @@ app.get('/api/stream/:subject_id', async (req, res) => {
             }
         );
 
+        console.log('Subject download OK');
+
         const content = processApiResponse(response);
 
-        // 5. Convert downloads to the response format you want
         const downloads = content?.downloads || [];
 
         const sources = downloads.map(file => ({
@@ -364,29 +374,24 @@ app.get('/api/stream/:subject_id', async (req, res) => {
             codec: file.codecName || file.codec
         }));
 
-        const hasResource = sources.length > 0;
-
-        // 6. Return the same format as your /api/stream endpoint
         res.json({
             subject_id,
             se,
             ep,
-            has_resource: hasResource,
+            has_resource: sources.length > 0,
             sources,
             hls: content?.hls || null,
             dash: content?.dash || null,
             free_episodes: content?.freeNum || 0,
             limited: content?.limited || false,
-            note: hasResource
+            note: sources.length
                 ? null
                 : 'No stream found for this episode.'
         });
 
     } catch (error) {
-        console.error(
-            'MovieStream error:',
-            error.message
-        );
+        console.error('MovieStream error:', error.response?.status || error.message);
+        console.error('MovieStream response:', error.response?.data);
 
         res.status(500).json({
             status: 'error',
@@ -395,6 +400,7 @@ app.get('/api/stream/:subject_id', async (req, res) => {
         });
     }
 });
+
 
 app.get('/api/stream/:subject_id/captions', async (req, res) => {
     const { subject_id } = req.params;
