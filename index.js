@@ -1,8 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import axios from 'axios';
-import { wrapper } from 'axios-cookiejar-support';
-import { CookieJar } from 'tough-cookie';
+
 
 const app = express();
 app.use(cors());
@@ -21,12 +20,11 @@ const SubjectType = {
     TV_SERIES: 2,
     MUSIC: 6
 };
-const jar = new CookieJar();
-const axiosInstance = wrapper(axios.create({
-    jar,
-    withCredentials: true,
+
+const axiosInstance = axios.create({
     timeout: 30000
-}));
+});
+
 let movieboxAppInfo = null;
 let cookiesInitialized = false;
 const DEFAULT = {
@@ -82,60 +80,88 @@ function processApiResponse(response) {
     return response.data || response;
 }
 
-async function ensureCookiesAreAssigned() {
-    if (!cookiesInitialized) {
-        try {
-           
-            const response = await axiosInstance.get(`${HOST_URL}/wefeed-h5-bff/app/get-latest-app-pkgs?app_name=moviebox`, {
-                headers: DEFAULT
-            });
-            
-            movieboxAppInfo = processApiResponse(response);
-            cookiesInitialized = true;
+let sessionCookies = '';
 
-            
-        } catch (error) {
-            console.error('Failed to get app info:', error.message);
-            throw error;
+async function ensureCookiesAreAssigned() {
+    if (sessionCookies) return true;
+
+    const response = await axiosInstance.get(
+        `${HOST_URL}/wefeed-h5-bff/app/get-latest-app-pkgs?app_name=moviebox`,
+        {
+            headers: DEFAULT
         }
+    );
+
+    const setCookie = response.headers['set-cookie'];
+
+    if (Array.isArray(setCookie)) {
+        sessionCookies = setCookie
+            .map(cookie => cookie.split(';')[0])
+            .join('; ');
     }
-    return cookiesInitialized;
+
+    movieboxAppInfo = processApiResponse(response);
+
+    return true;
 }
 
 async function makeApiRequestWithCookies(url, options = {}) {
     await ensureCookiesAreAssigned();
-    
-    const config = {
-        url: url,
-        headers: { ...DEFAULT_HEADERS, ...options.headers },
-        withCredentials: true,
-        ...options
-    };
-    
-    try {
-        const response = await axiosInstance(config);
-        return response;
-    } catch (error) {
-        console.error(`Request with cookies to ${url} failed:`, error.response?.status, error.response?.statusText);
-        throw error;
-    }
-}
 
+    const config = {
+        ...options,
+        url,
+        headers: {
+            ...DEFAULT_HEADERS,
+            ...(sessionCookies
+                ? { Cookie: sessionCookies }
+                : {}),
+            ...(options.headers || {})
+        }
+    };
+
+    return axiosInstance(config);
+}
 
 async function _getBearerToken() {
     if (_bearer_token) return _bearer_token;
-    const resp = await axios.get(`${API_BASE}/home?host=moviebox.ph`, { headers: DEFAULT_HEADERS });
+
+    const resp = await axiosInstance.get(
+        `${API_BASE}/home?host=moviebox.ph`,
+        {
+            headers: DEFAULT_HEADERS
+        }
+    );
+
     const xUser = resp.headers['x-user'];
+
     if (xUser) {
-        _bearer_token = JSON.parse(xUser).token;
-    } else {
-        const cookie = resp.headers['set-cookie'];
-        const m = cookie.match(/token=([^;]+)/);
-        if (m) _bearer_token = m[1];
+        try {
+            const parsed = JSON.parse(xUser);
+
+            if (parsed.token) {
+                _bearer_token = parsed.token;
+            }
+        } catch (error) {
+            console.error('Failed to parse x-user:', error.message);
+        }
     }
+
+    if (!_bearer_token) {
+        const setCookies = resp.headers['set-cookie'] || [];
+
+        for (const cookie of setCookies) {
+            const match = cookie.match(/token=([^;]+)/);
+
+            if (match) {
+                _bearer_token = match[1];
+                break;
+            }
+        }
+    }
+
     return _bearer_token || '';
 }
-
 async function _makeRequest(url, method = 'GET', payload = null, customHeaders = null) {
     const token = await _getBearerToken();
     const headers = {
@@ -145,8 +171,8 @@ async function _makeRequest(url, method = 'GET', payload = null, customHeaders =
     };
     try {
         const resp = method === 'POST'
-            ? await axios.post(url, payload, { headers })
-            : await axios.get(url, { headers });
+        ? await axiosInstance.post(url, payload, { headers })
+        : await axiosInstance.get(url, { headers });
         const xUser = resp.headers['x-user'];
         if (xUser) {
             const newToken = JSON.parse(xUser).token;
@@ -397,8 +423,10 @@ app.get('/api/stream/:subject_id/captions', async (req, res) => {
     res.json({ subject_id, se, ep, count: captions.length, captions });
 });
 
-app.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`);
-});
+if (process.env.NODE_ENV !== 'production') {
+    app.listen(PORT, () => {
+        console.log(`Server running on http://localhost:${PORT}`);
+    });
+}
 
 export default app;
