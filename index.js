@@ -322,44 +322,79 @@ app.get("/api/download", async (req, res) => {
     }
 });
 
+// Simple in-memory TTL cache — fine for a single Node process. If you ever
+// run this behind PM2 cluster mode or multiple instances, each process
+// gets its own cache, so move this to Redis (or similar) at that point.
+const CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
+
+const streamCache = new Map();
+const captionCache = new Map();
+
+function getCached(cache, key) {
+    const entry = cache.get(key);
+    if (!entry) return null;
+    if (Date.now() - entry.time > CACHE_TTL_MS) {
+        cache.delete(key);
+        return null;
+    }
+    return entry.value;
+}
+
+function setCached(cache, key, value) {
+    cache.set(key, { value, time: Date.now() });
+}
+
 app.get('/api/stream/:subject_id', async (req, res) => {
     const { subject_id } = req.params;
     const { detail_path, se = 1, ep = 1 } = req.query;
+
+    const cacheKey = `${subject_id}:${detail_path}:${se}:${ep}`;
+    const cached = getCached(streamCache, cacheKey);
+    if (cached) return res.json(cached);
+
     const domData = await _makeRequest(`${API_BASE}/media-player/get-domain`);
     const domain = domData.data || 'https://netfilm.world';
     const playerReferer = `${domain}/spa/videoPlayPage/movies/${detail_path}?id=${subject_id}&type=/movie/detail&detailSe=${se}&detailEp=${ep}&lang=en`;
     const playUrl = `${domain}/wefeed-h5api-bff/subject/download?subjectId=${subject_id}&se=${se}&ep=${ep}&detailPath=${detail_path}`;
     const resp = await axios.get(playUrl, { headers: { ...PLAYER_HEADERS, Referer: playerReferer } });
     const data = resp.data.data;
-    
+
     const hasResource = data.hasResource;
-        const streams = data.downloads
-            .filter(s => typeof s.url === "string" && s.url.trim() !== "")
-            .map(s => {
-                const filename = `${detail_path}-${s.resolution}.${s.format || "mp4"}`;
+    const streams = data.downloads
+        .filter(s => typeof s.url === "string" && s.url.trim() !== "")
+        .map(s => {
+            const filename = `${detail_path}-${s.resolution}.${s.format || "mp4"}`;
 
-                return {
-                    resolution: `${s.resolution}p`,
-                    format: s.format,
-                    url: `https://bunnyforum.site/api/download?url=${encodeURIComponent(s.url)}&filename=${encodeURIComponent(filename)}`,
-                    size: s.size,
-                    duration: s.duration,
-                    codec: s.codecName
-                };
-            });
-
-        res.json({
-            subject_id, se, ep, has_resource: hasResource, sources: streams, hls: data.hls, dash: data.dash, free_episodes: data.freeNum, limited: data.limited, note: hasResource ? null : 'No stream found for this episode.'
+            return {
+                resolution: `${s.resolution}p`,
+                format: s.format,
+                url: `https://bunnyforum.site/api/download?url=${encodeURIComponent(s.url)}&filename=${encodeURIComponent(filename)}`,
+                size: s.size,
+                duration: s.duration,
+                codec: s.codecName
+            };
         });
+
+    const payload = {
+        subject_id, se, ep, has_resource: hasResource, sources: streams, hls: data.hls, dash: data.dash, free_episodes: data.freeNum, limited: data.limited, note: hasResource ? null : 'No stream found for this episode.'
+    };
+
+    // Only cache a genuine hit — an empty/failed lookup shouldn't get
+    // pinned for 12 hours if the upstream just needs a retry.
+    if (hasResource) setCached(streamCache, cacheKey, payload);
+
+    res.json(payload);
 });
-
-
-
 
 
 app.get('/api/stream/:subject_id/captions', async (req, res) => {
     const { subject_id } = req.params;
     const { detail_path, se = 1, ep = 1 } = req.query;
+
+    const cacheKey = `${subject_id}:${detail_path}:${se}:${ep}`;
+    const cached = getCached(captionCache, cacheKey);
+    if (cached) return res.json(cached);
+
     const domData = await _makeRequest(`${API_BASE}/media-player/get-domain`);
     const domain = domData.data || 'https://netfilm.world';
     const playerReferer = `${domain}/spa/videoPlayPage/movies/${detail_path}?id=${subject_id}&type=/movie/detail&detailSe=${se}&detailEp=${ep}&lang=en`;
@@ -376,13 +411,22 @@ app.get('/api/stream/:subject_id/captions', async (req, res) => {
         streamId = dash[0].id;
         streamFormat = dash[0].format || 'DASH';
     }
-    if (!streamId) return res.json({ subject_id, se, ep, count: 0, captions: [] });
+    if (!streamId) {
+        // Nothing found upstream — don't cache a miss, so a later retry
+        // (once the episode is actually available) isn't stuck behind it.
+        return res.json({ subject_id, se, ep, count: 0, captions: [] });
+    }
     const capUrl = `${API_BASE}/subject/caption?format=${streamFormat}&id=${streamId}&subjectId=${subject_id}&detailPath=${detail_path}`;
     const data = await _makeRequest(capUrl);
     const inner = data.data;
     const captions = Array.isArray(inner) ? inner : inner.captions || [];
-    res.json({ subject_id, se, ep, count: captions.length, captions });
+
+    const payload = { subject_id, se, ep, count: captions.length, captions };
+    setCached(captionCache, cacheKey, payload);
+
+    res.json(payload);
 });
+
 
 if (process.env.NODE_ENV !== 'production') {
     app.listen(PORT, () => {
