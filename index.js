@@ -333,22 +333,24 @@ app.get('/api/stream/:subject_id', async (req, res) => {
     const data = resp.data.data;
     
     const hasResource = data.hasResource;
-  
-    const streams = data.downloads.map(s => {
-            const filename = `${detail_path}-${s.resolution}.${s.format || "mp4"}`;
+        const streams = data.downloads
+            .filter(s => typeof s.url === "string" && s.url.trim() !== "")
+            .map(s => {
+                const filename = `${detail_path}-${s.resolution}.${s.format || "mp4"}`;
 
-            return {
-                resolution: `${s.resolution}p`,
-                format: s.format,
-                url: `https://bunnyforum.site/api/download?url=${encodeURIComponent(s.url)}&filename=${encodeURIComponent(filename)}`,
-                size: s.size,
-                duration: s.duration,
-                codec: s.codecName
-            };
+                return {
+                    resolution: `${s.resolution}p`,
+                    format: s.format,
+                    url: `https://bunnyforum.site/api/download?url=${encodeURIComponent(s.url)}&filename=${encodeURIComponent(filename)}`,
+                    size: s.size,
+                    duration: s.duration,
+                    codec: s.codecName
+                };
+            });
+
+        res.json({
+            subject_id, se, ep, has_resource: hasResource, sources: streams, hls: data.hls, dash: data.dash, free_episodes: data.freeNum, limited: data.limited, note: hasResource ? null : 'No stream found for this episode.'
         });
-    res.json({
-        subject_id, se, ep, has_resource: hasResource, sources: streams, hls: data.hls, dash: data.dash, free_episodes: data.freeNum, limited: data.limited, note: hasResource ? null : 'No stream found for this episode.'
-    });
 });
 
 
