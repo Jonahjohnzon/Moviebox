@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import axios from 'axios';
-
+import { request } from "undici";
 
 const app = express();
 app.use(cors());
@@ -210,6 +210,118 @@ app.get('/detail/:slug', async (req, res) => {
     res.json(await _makeRequest(url));
 });
 
+
+app.get("/api/download", async (req, res) => {
+    try {
+        const { url, filename = "video.mp4" } = req.query;
+
+        if (!url) {
+            return res.status(400).json({
+                error: "Missing url"
+            });
+        }
+
+        let target;
+
+        try {
+            target = new URL(url);
+        } catch {
+            return res.status(400).json({
+                error: "Invalid URL"
+            });
+        }
+
+        const headers = {
+            "User-Agent":
+                "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 Chrome/148 Mobile Safari/537.36",
+            "Accept": "*/*",
+            "Referer": "https://videodownloader.site/"
+        };
+
+        if (req.headers.range) {
+            headers.Range = req.headers.range;
+        }
+
+        const upstream = await request(target.toString(), {
+            method: "GET",
+            headers
+        });
+
+
+        if (upstream.statusCode >= 400) {
+            let body = "";
+
+            try {
+                body = await upstream.body.text();
+            } catch {}
+
+            return res.status(upstream.statusCode).json({
+                error: "CDN rejected request",
+                status: upstream.statusCode,
+                body: body.slice(0, 500)
+            });
+        }
+
+        const contentType =
+            upstream.headers["content-type"] || "video/mp4";
+
+        res.setHeader("Content-Type", contentType);
+
+        if (upstream.headers["content-length"]) {
+            res.setHeader(
+                "Content-Length",
+                upstream.headers["content-length"]
+            );
+        }
+
+        if (upstream.headers["content-range"]) {
+            res.setHeader(
+                "Content-Range",
+                upstream.headers["content-range"]
+            );
+        }
+
+        if (upstream.headers["accept-ranges"]) {
+            res.setHeader(
+                "Accept-Ranges",
+                upstream.headers["accept-ranges"]
+            );
+        }
+
+        // Set the filename
+        res.setHeader(
+            "Content-Disposition",
+            `attachment; filename="${filename}"`
+        );
+
+        res.setHeader(
+            "Access-Control-Allow-Origin",
+            "*"
+        );
+
+        res.setHeader(
+            "Access-Control-Expose-Headers",
+            "Content-Length, Content-Range, Accept-Ranges, Content-Type, Content-Disposition"
+        );
+
+        res.status(upstream.statusCode);
+
+        upstream.body.pipe(res);
+
+    } catch (error) {
+        console.error(
+            "DOWNLOAD PROXY ERROR:",
+            error.message
+        );
+
+        if (!res.headersSent) {
+            res.status(500).json({
+                error: error.message
+            });
+        }
+    }
+});
+
 app.get('/api/stream/:subject_id', async (req, res) => {
     const { subject_id } = req.params;
     const { detail_path, se = 1, ep = 1 } = req.query;
@@ -221,15 +333,19 @@ app.get('/api/stream/:subject_id', async (req, res) => {
     const data = resp.data.data;
     
     const hasResource = data.hasResource;
-   
-    const streams = data.downloads.map(s => ({
-        resolution: `${s.resolution}p`,
-        format: s.format,
-        url: s.url,
-        size: s.size,
-        duration: s.duration,
-        codec: s.codecName
-    }));
+  
+    const streams = data.downloads.map(s => {
+            const filename = `${detail_path}-${s.resolution}.${s.format || "mp4"}`;
+
+            return {
+                resolution: `${s.resolution}p`,
+                format: s.format,
+                url: `https://bunnyforum.site/api/download?url=${encodeURIComponent(s.url)}&filename=${encodeURIComponent(filename)}`,
+                size: s.size,
+                duration: s.duration,
+                codec: s.codecName
+            };
+        });
     res.json({
         subject_id, se, ep, has_resource: hasResource, sources: streams, hls: data.hls, dash: data.dash, free_episodes: data.freeNum, limited: data.limited, note: hasResource ? null : 'No stream found for this episode.'
     });
